@@ -1099,7 +1099,7 @@ class ImageEditor {
                     this.pendingMarkerTouchData = null;
                     this.currentTouchAction = null;
                     if (navigator.vibrate) {
-                        try { navigator.vibrate(50); } catch (e) {}
+                        try { navigator.vibrate(50); } catch (e) { }
                     }
                     this.deleteMarker(targetMarkerIdx);
                 }, 450);

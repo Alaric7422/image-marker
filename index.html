@@ -1,6 +1,6 @@
-
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,7 +13,8 @@
             --button-fg: #f0f0f0;
             --button-hover-bg: #3e4246;
             --button-active-bg: #4a4f54;
-            --button-mode-active-bg: #3b82f6; /* Modern royal blue */
+            --button-mode-active-bg: #3b82f6;
+            /* Modern royal blue */
             --canvas-bg: #141517;
             --status-success-bg: #16a34a;
             --status-error-bg: #dc2626;
@@ -36,8 +37,10 @@
             display: flex;
             flex-direction: column;
             height: 100vh;
-            height: 100dvh; /* Dynamic viewport height for mobile browsers */
-            overflow: hidden; /* Prevent body scroll */
+            height: 100dvh;
+            /* Dynamic viewport height for mobile browsers */
+            overflow: hidden;
+            /* Prevent body scroll */
             user-select: none;
             -webkit-user-select: none;
         }
@@ -55,7 +58,10 @@
             flex-shrink: 0;
         }
 
-        .toolbar button, .toolbar input[type="file"], .toolbar select, .toolbar .file-input-label {
+        .toolbar button,
+        .toolbar input[type="file"],
+        .toolbar select,
+        .toolbar .file-input-label {
             background-color: var(--button-bg);
             color: var(--button-fg);
             border: 1px solid var(--input-border);
@@ -80,17 +86,21 @@
             text-overflow: ellipsis;
         }
 
-        .toolbar button:hover, .toolbar select:hover, .toolbar .file-input-label:hover {
+        .toolbar button:hover,
+        .toolbar select:hover,
+        .toolbar .file-input-label:hover {
             background-color: var(--button-hover-bg);
             border-color: #5a6068;
         }
 
-        .toolbar button:active, .toolbar .file-input-label:active {
+        .toolbar button:active,
+        .toolbar .file-input-label:active {
             transform: scale(0.97);
             background-color: var(--button-active-bg);
         }
 
-        .toolbar button:disabled, .toolbar select:disabled {
+        .toolbar button:disabled,
+        .toolbar select:disabled {
             background-color: #26282a;
             border-color: #33363a;
             color: #6c7278;
@@ -166,10 +176,12 @@
             background-color: var(--status-error-bg);
             color: #ffffff;
         }
+
         .status-bar.success {
             background-color: var(--status-success-bg);
             color: #ffffff;
         }
+
         .status-bar.info {
             background-color: transparent;
             color: #9ca3af;
@@ -183,7 +195,8 @@
             flex-shrink: 0;
         }
 
-        #filename-display, #dimensions-display {
+        #filename-display,
+        #dimensions-display {
             background-color: var(--input-bg);
             border: 1px solid var(--input-border);
             padding: 1px 5px;
@@ -304,7 +317,9 @@
                 gap: 2px;
             }
 
-            .toolbar button, .toolbar select, .toolbar .file-input-label {
+            .toolbar button,
+            .toolbar select,
+            .toolbar .file-input-label {
                 padding: 2.5px 5px;
                 font-size: 10.5px;
             }
@@ -319,7 +334,8 @@
                 font-size: 10px;
             }
 
-            #filename-display, #dimensions-display {
+            #filename-display,
+            #dimensions-display {
                 font-size: 9.5px;
                 padding: 1px 4px;
             }
@@ -332,7 +348,9 @@
                 justify-content: center;
             }
 
-            .toolbar button, .toolbar select, .toolbar .file-input-label {
+            .toolbar button,
+            .toolbar select,
+            .toolbar .file-input-label {
                 padding: 2px 4px;
                 font-size: 9.5px;
                 border-radius: 3px;
@@ -345,7 +363,8 @@
             }
 
             #dimensions-display {
-                display: none; /* Hide dimensions on very small mobile to save space */
+                display: none;
+                /* Hide dimensions on very small mobile to save space */
             }
 
             .modal-content {
@@ -354,17 +373,17 @@
                 font-size: 11px;
             }
         }
-
-
     </style>
 </head>
+
 <body>
     <div class="toolbar">
         <input type="file" id="loadImageInput" accept="image/*" multiple>
         <label for="loadImageInput" class="file-input-label" role="button" aria-label="Load Images">🖼️ Open</label>
         <button id="pasteImageBtn" title="Paste Image from Clipboard (Ctrl+V)">📥 Paste</button>
         <button id="saveImageBtn" title="Save Image (Ctrl+S)" disabled>💾 Save</button>
-        <button id="copyImageBtn" title="Copy current image with markers to clipboard (Ctrl+C)" disabled>📋 Copy</button>
+        <button id="copyImageBtn" title="Copy current image with markers to clipboard (Ctrl+C)" disabled>📋
+            Copy</button>
         <button id="undoBtn" title="Undo last action (Ctrl+Z)" disabled>↩️ Undo</button>
         <button id="redoBtn" title="Redo last undone action (Ctrl+Y / Ctrl+Shift+Z)" disabled>↪️ Redo</button>
 
@@ -419,7 +438,7 @@
                 <label for="circleOutlineColorInput">Circle Outline Color:</label>
                 <input type="color" id="circleOutlineColorInput" value="#000000">
             </div>
-             <div class="setting-item">
+            <div class="setting-item">
                 <label for="fontFamilyInput">Font Family:</label>
                 <input type="text" id="fontFamilyInput" value="Arial">
             </div>
@@ -436,11 +455,13 @@
             <p id="confirmModalMessage">Are you sure?</p>
             <div class="modal-buttons">
                 <button id="confirmModalCancelBtn" aria-label="Cancel action">Cancel</button>
-                <button id="confirmModalConfirmBtn" class="confirm-action-btn" aria-label="Confirm action">Confirm</button>
+                <button id="confirmModalConfirmBtn" class="confirm-action-btn"
+                    aria-label="Confirm action">Confirm</button>
             </div>
         </div>
     </div>
 
     <script type="module" src="index.js"></script>
 </body>
+
 </html>
