@@ -16,6 +16,7 @@ class ImageEditor {
     modeABtn;
     modeBBtn;
     undoBtn;
+    redoBtn; // Redo button
     saveImageBtn;
     copyImageBtn;
     pasteImageBtn;
@@ -48,6 +49,8 @@ class ImageEditor {
     currentImageIndex = -1;
     originalImage = null;
     history = [];
+    undoStack = []; // State stack for Undo
+    redoStack = []; // State stack for Redo
     counterA = 1;
     counterB = 1;
     drawingMode = null;
@@ -60,6 +63,8 @@ class ImageEditor {
     minZoomLevel = 0.1;
     maxZoomLevel = 10.0;
     dragOccurred = false; // Flag to distinguish mouse drag from click
+    isSpacePressed = false; // Flag for spacebar panning
+    hoveredMarkerIndex = -1; // Index of marker hovered by mouse
     settings = {
         fontFamily: "Arial",
         fontSize: 40,
@@ -80,6 +85,8 @@ class ImageEditor {
     pendingMarkerTouchData = null;
     initialSingleTouchDragAnchor = null;
     SINGLE_TOUCH_DRAG_THRESHOLD = 8; // pixels
+    longPressTimeoutId = null; // Timeout for mobile long-press delete
+    longPressTriggered = false; // Flag to prevent placing marker after long-press delete
     constructor() {
         this.canvas = document.getElementById('imageCanvas');
         this.ctx = this.canvas.getContext('2d');
@@ -91,6 +98,7 @@ class ImageEditor {
         this.modeABtn = document.getElementById('modeABtn');
         this.modeBBtn = document.getElementById('modeBBtn');
         this.undoBtn = document.getElementById('undoBtn');
+        this.redoBtn = document.getElementById('redoBtn'); // Redo
         this.saveImageBtn = document.getElementById('saveImageBtn');
         this.copyImageBtn = document.getElementById('copyImageBtn');
         this.pasteImageBtn = document.getElementById('pasteImageBtn');
@@ -133,6 +141,7 @@ class ImageEditor {
         this.modeABtn.addEventListener('click', () => this.setDrawingMode('A'));
         this.modeBBtn.addEventListener('click', () => this.setDrawingMode('B'));
         this.undoBtn.addEventListener('click', () => this.undoLastAction());
+        if (this.redoBtn) this.redoBtn.addEventListener('click', () => this.redoLastAction());
         this.saveImageBtn.addEventListener('click', () => this.saveImage());
         this.copyImageBtn.addEventListener('click', () => this.copyImageToClipboard());
         this.pasteImageBtn.addEventListener('click', () => this.handlePaste());
@@ -147,6 +156,7 @@ class ImageEditor {
         this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e)); // Pass event
         this.canvas.addEventListener('mouseleave', () => this.handleMouseUp()); // Also call on mouseleave to reset panning state
+        this.canvas.addEventListener('contextmenu', (e) => this.handleContextMenu(e)); // Right click to delete marker
         // Canvas Touch Events
         this.canvas.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
         this.canvas.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
@@ -175,28 +185,58 @@ class ImageEditor {
                     e.preventDefault();
                     return;
                 }
+                if (this.drawingMode) {
+                    this.setDrawingMode(null);
+                    this.showStatus("Drawing mode deactivated.", false, 1500);
+                    e.preventDefault();
+                    return;
+                }
             }
             this.handleKeyboardShortcuts(e);
         });
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                this.isSpacePressed = false;
+                this.updateCursorStyle();
+            }
+        });
     }
     handleKeyboardShortcuts(e) {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) { // Updated to include HTMLSelectElement
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
+            return;
+        }
+        // Spacebar for panning
+        if (e.code === 'Space') {
+            if (!this.isSpacePressed) {
+                this.isSpacePressed = true;
+                this.updateCursorStyle();
+            }
+            e.preventDefault();
             return;
         }
         if (e.ctrlKey || e.metaKey) {
+            // Redo: Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z
+            if (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z')) {
+                e.preventDefault();
+                if (this.redoBtn && !this.redoBtn.disabled)
+                    this.redoLastAction();
+                return;
+            }
+            // Undo: Ctrl+Z (without shift)
+            if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                if (!this.undoBtn.disabled)
+                    this.undoLastAction();
+                return;
+            }
             switch (e.key.toLowerCase()) {
-                case 'z':
-                    e.preventDefault();
-                    if (!this.undoBtn.disabled)
-                        this.undoLastAction();
-                    break;
                 case 's':
                     e.preventDefault();
                     if (!this.saveImageBtn.disabled)
                         this.saveImage();
                     break;
                 case 'c':
-                    if (e.ctrlKey && !this.copyImageBtn.disabled) {
+                    if (!this.copyImageBtn.disabled) {
                         e.preventDefault();
                         this.copyImageToClipboard();
                     }
@@ -206,6 +246,47 @@ class ImageEditor {
                     if (!this.resetZoomBtn.disabled)
                         this.resetZoomAndPan();
                     break;
+            }
+            return;
+        }
+        // Single key shortcuts (when no Ctrl / Meta / Alt)
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+            if (e.key.toLowerCase() === 'a' || e.key === '1') {
+                e.preventDefault();
+                if (this.originalImage)
+                    this.setDrawingMode('A');
+                return;
+            }
+            if (e.key.toLowerCase() === 'b' || e.key === '2') {
+                e.preventDefault();
+                if (this.originalImage)
+                    this.setDrawingMode('B');
+                return;
+            }
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                if (this.originalImage)
+                    this.applyZoom(1.2, this.canvas.width / 2, this.canvas.height / 2);
+                return;
+            }
+            if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                if (this.originalImage)
+                    this.applyZoom(1 / 1.2, this.canvas.width / 2, this.canvas.height / 2);
+                return;
+            }
+            if (e.key === '0') {
+                e.preventDefault();
+                if (!this.resetZoomBtn.disabled)
+                    this.resetZoomAndPan();
+                return;
+            }
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.hoveredMarkerIndex !== -1) {
+                    e.preventDefault();
+                    this.deleteMarker(this.hoveredMarkerIndex);
+                    return;
+                }
             }
         }
         if (this.currentImageIndex !== -1 && this.loadedImages.length > 1) {
@@ -255,6 +336,8 @@ class ImageEditor {
                             name: file.name,
                             image: img,
                             history: [],
+                            undoStack: [],
+                            redoStack: [],
                             counterA: 1,
                             counterB: 1,
                             mimeType: file.type // Store mimeType
@@ -430,6 +513,8 @@ class ImageEditor {
                     name: displayName,
                     image: img,
                     history: [],
+                    undoStack: [],
+                    redoStack: [],
                     counterA: 1,
                     counterB: 1,
                     mimeType: file.type // Store mimeType from pasted/blob file
@@ -468,9 +553,12 @@ class ImageEditor {
         this.currentImageIndex = index;
         const current = this.loadedImages[this.currentImageIndex];
         this.originalImage = current.image;
-        this.history = current.history;
-        this.counterA = current.counterA;
-        this.counterB = current.counterB;
+        this.history = current.history || [];
+        this.undoStack = current.undoStack || [];
+        this.redoStack = current.redoStack || [];
+        this.counterA = current.counterA || 1;
+        this.counterB = current.counterB || 1;
+        this.hoveredMarkerIndex = -1;
         this.filenameDisplay.textContent = this.truncateFilename(current.name);
         this.filenameDisplay.title = current.name;
         this.dimensionsDisplay.textContent = `${this.originalImage.naturalWidth} x ${this.originalImage.naturalHeight} px`;
@@ -487,6 +575,8 @@ class ImageEditor {
             return;
         if (this.currentImageIndex !== -1 && this.currentImageIndex < this.loadedImages.length && this.loadedImages[this.currentImageIndex]) {
             this.loadedImages[this.currentImageIndex].history = [...this.history];
+            this.loadedImages[this.currentImageIndex].undoStack = [...this.undoStack];
+            this.loadedImages[this.currentImageIndex].redoStack = [...this.redoStack];
             this.loadedImages[this.currentImageIndex].counterA = this.counterA;
             this.loadedImages[this.currentImageIndex].counterB = this.counterB;
         }
@@ -510,6 +600,8 @@ class ImageEditor {
         if (this.currentImageIndex !== -1 && this.currentImageIndex < this.loadedImages.length) {
             // Save state of the currently active image before switching
             this.loadedImages[this.currentImageIndex].history = [...this.history];
+            this.loadedImages[this.currentImageIndex].undoStack = [...this.undoStack];
+            this.loadedImages[this.currentImageIndex].redoStack = [...this.redoStack];
             this.loadedImages[this.currentImageIndex].counterA = this.counterA;
             this.loadedImages[this.currentImageIndex].counterB = this.counterB;
         }
@@ -542,8 +634,11 @@ class ImageEditor {
     clearCanvasAndState() {
         this.originalImage = null;
         this.history = [];
+        this.undoStack = [];
+        this.redoStack = [];
         this.counterA = 1;
         this.counterB = 1;
+        this.hoveredMarkerIndex = -1;
         this.zoomLevel = 1.0;
         this.panX = 0;
         this.panY = 0;
@@ -637,23 +732,33 @@ class ImageEditor {
         return { x: originalX, y: originalY };
     }
     handleCanvasClick(event) {
-        // If a drag occurred with the mouse, don't treat this click as a marker placement.
-        // This flag is set in mousemove if isPanning is true and reset on next mousedown.
-        if (this.dragOccurred) {
+        // If a drag occurred with the mouse or spacebar is pressed, don't treat this click as a marker placement.
+        if (this.dragOccurred || this.isSpacePressed) {
             return;
         }
         if (!this.originalImage || !this.drawingMode)
             return;
         if (event.button !== 0)
-            return; // Only left click for markers (isPanning is false here)
+            return; // Only left click for markers
+
         const originalCoords = this.getOriginalImageCoordinatesFromScreenPoint(event.clientX, event.clientY);
         if (originalCoords) {
             this.addMarker(originalCoords.x, originalCoords.y);
         }
     }
+    saveStateForUndo() {
+        this.undoStack.push({
+            markers: this.history.map(m => ({ ...m })),
+            counterA: this.counterA,
+            counterB: this.counterB
+        });
+    }
     addMarker(originalX, originalY) {
         if (!this.originalImage || !this.drawingMode)
             return;
+        this.saveStateForUndo();
+        this.redoStack = []; // Clear redo stack on new action
+
         const number = this.drawingMode === 'A' ? this.counterA++ : this.counterB++;
         const fillColor = this.drawingMode === 'A' ? this.settings.circleFillColorA : this.settings.circleFillColorB;
         const marker = {
@@ -671,22 +776,106 @@ class ImageEditor {
         this.history.push(marker);
         this.redrawCanvas();
         this.updateButtonStates();
+        this.showStatus(`Placed Mode ${marker.mode} #${marker.number}.`, false, 1500);
     }
-    undoLastAction() {
-        if (this.history.length === 0)
+    deleteMarker(index) {
+        if (index < 0 || index >= this.history.length)
             return;
-        const lastAction = this.history.pop();
-        if (lastAction) {
-            if (lastAction.mode === 'A' && this.counterA > 1) {
-                this.counterA--;
-            }
-            else if (lastAction.mode === 'B' && this.counterB > 1) {
-                this.counterB--;
-            }
-        }
+        const removed = this.history[index];
+        this.saveStateForUndo();
+        this.redoStack = [];
+
+        this.history.splice(index, 1);
+        this.renumberMarkers();
+        this.hoveredMarkerIndex = -1;
         this.redrawCanvas();
         this.updateButtonStates();
-        this.showStatus("Last action undone.", false, 1500);
+        this.updateCursorStyle();
+        this.showStatus(`Deleted Mode ${removed.mode} #${removed.number}. Auto-renumbered.`, false, 2000);
+    }
+    renumberMarkers() {
+        let countA = 1;
+        let countB = 1;
+        for (const marker of this.history) {
+            if (marker.mode === 'A') {
+                marker.number = countA++;
+            }
+            else if (marker.mode === 'B') {
+                marker.number = countB++;
+            }
+        }
+        this.counterA = countA;
+        this.counterB = countB;
+    }
+    undoLastAction() {
+        if (this.undoStack.length === 0)
+            return;
+        this.redoStack.push({
+            markers: this.history.map(m => ({ ...m })),
+            counterA: this.counterA,
+            counterB: this.counterB
+        });
+        const prevState = this.undoStack.pop();
+        this.history = prevState.markers.map(m => ({ ...m }));
+        this.counterA = prevState.counterA;
+        this.counterB = prevState.counterB;
+        this.hoveredMarkerIndex = -1;
+        this.redrawCanvas();
+        this.updateButtonStates();
+        this.updateCursorStyle();
+        this.showStatus("Undone.", false, 1500);
+    }
+    redoLastAction() {
+        if (this.redoStack.length === 0)
+            return;
+        this.undoStack.push({
+            markers: this.history.map(m => ({ ...m })),
+            counterA: this.counterA,
+            counterB: this.counterB
+        });
+        const nextState = this.redoStack.pop();
+        this.history = nextState.markers.map(m => ({ ...m }));
+        this.counterA = nextState.counterA;
+        this.counterB = nextState.counterB;
+        this.hoveredMarkerIndex = -1;
+        this.redrawCanvas();
+        this.updateButtonStates();
+        this.updateCursorStyle();
+        this.showStatus("Redone.", false, 1500);
+    }
+    getMarkerIndexAtScreenPoint(screenX, screenY) {
+        if (!this.originalImage || this.history.length === 0)
+            return -1;
+        const rect = this.canvas.getBoundingClientRect();
+        const canvasX = screenX - rect.left;
+        const canvasY = screenY - rect.top;
+        const imgDisplayWidth = this.originalImage.naturalWidth * this.zoomLevel;
+        const imgDisplayHeight = this.originalImage.naturalHeight * this.zoomLevel;
+        const drawX = (this.canvas.width - imgDisplayWidth) / 2 + this.panX;
+        const drawY = (this.canvas.height - imgDisplayHeight) / 2 + this.panY;
+
+        // Iterate in reverse to detect topmost marker first
+        for (let i = this.history.length - 1; i >= 0; i--) {
+            const marker = this.history[i];
+            const markerCanvasX = drawX + (marker.x * this.zoomLevel);
+            const markerCanvasY = drawY + (marker.y * this.zoomLevel);
+            const radius = Math.max(marker.circleRadius * this.zoomLevel, 14);
+            const dx = canvasX - markerCanvasX;
+            const dy = canvasY - markerCanvasY;
+            if ((dx * dx + dy * dy) <= (radius * radius)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    handleContextMenu(event) {
+        event.preventDefault();
+        if (!this.originalImage)
+            return;
+        const markerIndex = this.getMarkerIndexAtScreenPoint(event.clientX, event.clientY);
+        if (markerIndex !== -1) {
+            this.deleteMarker(markerIndex);
+        }
     }
     redrawCanvas() {
         this.ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
@@ -702,16 +891,29 @@ class ImageEditor {
         this.ctx.imageSmoothingEnabled = this.zoomLevel < 1;
         this.ctx.imageSmoothingQuality = this.zoomLevel < 1 ? "medium" : "high";
         this.ctx.drawImage(this.originalImage, drawX, drawY, imgDisplayWidth, imgDisplayHeight);
-        this.history.forEach(marker => {
+        this.history.forEach((marker, index) => {
             const markerCanvasX = drawX + (marker.x * this.zoomLevel);
             const markerCanvasY = drawY + (marker.y * this.zoomLevel);
             const radius = marker.circleRadius * this.zoomLevel;
             const fontSize = marker.fontSize * this.zoomLevel;
+            const isHovered = index === this.hoveredMarkerIndex;
+
+            // Draw highlight ring when marker is hovered
+            if (isHovered) {
+                this.ctx.save();
+                this.ctx.beginPath();
+                this.ctx.arc(markerCanvasX, markerCanvasY, Math.max(1, radius) + 4, 0, Math.PI * 2);
+                this.ctx.strokeStyle = '#ff4444';
+                this.ctx.lineWidth = 2.5;
+                this.ctx.stroke();
+                this.ctx.restore();
+            }
+
             this.ctx.beginPath();
             this.ctx.arc(markerCanvasX, markerCanvasY, Math.max(1, radius), 0, Math.PI * 2);
             this.ctx.fillStyle = marker.fillColor;
             this.ctx.fill();
-            this.ctx.strokeStyle = marker.outlineColor;
+            this.ctx.strokeStyle = isHovered ? '#ff4444' : marker.outlineColor;
             this.ctx.lineWidth = Math.max(0.5, (marker.circleRadius * 0.05) * this.zoomLevel);
             this.ctx.stroke();
             this.ctx.fillStyle = marker.fontColor;
@@ -762,22 +964,27 @@ class ImageEditor {
         }
         this.pendingMarkerTouchData = null;
         this.initialSingleTouchDragAnchor = null;
-        if (event.button === 1) { // Middle mouse button always pans
+
+        if (event.button === 2) {
+            // Right click is handled by contextmenu event for marker deletion
+            return;
+        }
+
+        if (event.button === 1 || this.isSpacePressed) { // Middle mouse button or Spacebar+Click always pans
+            this.isPanning = true;
+            this.lastPanX = event.clientX;
+            this.lastPanY = event.clientY;
+            this.canvas.style.cursor = 'grabbing';
+            event.preventDefault();
+            return;
+        }
+        else if (event.button === 0) { // Left mouse button
             this.isPanning = true;
             this.lastPanX = event.clientX;
             this.lastPanY = event.clientY;
             this.canvas.style.cursor = 'grabbing';
             event.preventDefault();
         }
-        else if (event.button === 0) { // Left mouse button always initiates pan if image loaded
-            this.isPanning = true;
-            this.lastPanX = event.clientX;
-            this.lastPanY = event.clientY;
-            this.canvas.style.cursor = 'grabbing'; // Pan starts, so cursor is grabbing
-            event.preventDefault();
-        }
-        // If isPanning became true, updateCursorStyle will refine cursor if needed,
-        // but direct setting provides immediate feedback.
     }
     handleMouseMove(event) {
         if (this.isPanning && (event.pointerType === undefined || event.pointerType === 'mouse') && this.originalImage) {
@@ -789,13 +996,21 @@ class ImageEditor {
             this.lastPanX = event.clientX;
             this.lastPanY = event.clientY;
             this.redrawCanvas();
+            return;
+        }
+        if (this.originalImage && !this.isPanning) {
+            const prevHovered = this.hoveredMarkerIndex;
+            this.hoveredMarkerIndex = this.getMarkerIndexAtScreenPoint(event.clientX, event.clientY);
+            if (prevHovered !== this.hoveredMarkerIndex) {
+                this.redrawCanvas();
+                this.updateCursorStyle();
+            }
         }
     }
     handleMouseUp(event) {
         if (this.isPanning) {
             this.isPanning = false;
         }
-        // dragOccurred flag persists until the next mousedown
         this.updateCursorStyle();
     }
     updateCursorStyle() {
@@ -804,14 +1019,21 @@ class ImageEditor {
             this.canvas.style.cursor = 'grabbing';
             return;
         }
+        if (this.isSpacePressed) {
+            this.canvas.style.cursor = 'grab';
+            return;
+        }
         if (!this.originalImage) {
             this.canvas.style.cursor = 'default';
         }
+        else if (this.hoveredMarkerIndex !== -1) {
+            this.canvas.style.cursor = 'pointer';
+        }
         else if (this.drawingMode) {
-            this.canvas.style.cursor = 'copy'; // For placing markers
+            this.canvas.style.cursor = 'crosshair';
         }
         else {
-            this.canvas.style.cursor = 'grab'; // Default for pannable image when not drawing
+            this.canvas.style.cursor = 'grab';
         }
     }
     // --- Touch Event Handlers ---
@@ -829,6 +1051,12 @@ class ImageEditor {
             clearTimeout(this.markerPlacementTimeoutId);
             this.markerPlacementTimeoutId = null;
         }
+        if (this.longPressTimeoutId) {
+            clearTimeout(this.longPressTimeoutId);
+            this.longPressTimeoutId = null;
+        }
+        this.longPressTriggered = false;
+
         if (this.activeTouches.size >= 2) {
             this.currentTouchAction = 'pinch';
             this.isPanning = false;
@@ -858,12 +1086,31 @@ class ImageEditor {
         else if (this.activeTouches.size === 1) {
             const touch = Array.from(this.activeTouches.values())[0];
             this.isPanning = false;
+
+            // Check if touching an existing marker to start long-press delete timer
+            const targetMarkerIdx = this.getMarkerIndexAtScreenPoint(touch.clientX, touch.clientY);
+            if (targetMarkerIdx !== -1) {
+                this.longPressTimeoutId = window.setTimeout(() => {
+                    this.longPressTriggered = true;
+                    if (this.markerPlacementTimeoutId) {
+                        clearTimeout(this.markerPlacementTimeoutId);
+                        this.markerPlacementTimeoutId = null;
+                    }
+                    this.pendingMarkerTouchData = null;
+                    this.currentTouchAction = null;
+                    if (navigator.vibrate) {
+                        try { navigator.vibrate(50); } catch (e) {}
+                    }
+                    this.deleteMarker(targetMarkerIdx);
+                }, 450);
+            }
+
             if (this.drawingMode) {
                 this.currentTouchAction = 'potential-marker';
                 this.pendingMarkerTouchData = { ...touch };
                 this.initialSingleTouchDragAnchor = { x: touch.clientX, y: touch.clientY };
                 this.markerPlacementTimeoutId = window.setTimeout(() => {
-                    if (this.currentTouchAction === 'potential-marker' && this.pendingMarkerTouchData && this.originalImage && this.drawingMode) {
+                    if (this.currentTouchAction === 'potential-marker' && this.pendingMarkerTouchData && this.originalImage && this.drawingMode && !this.longPressTriggered) {
                         const originalCoords = this.getOriginalImageCoordinatesFromScreenPoint(this.pendingMarkerTouchData.clientX, this.pendingMarkerTouchData.clientY);
                         if (originalCoords)
                             this.addMarker(originalCoords.x, originalCoords.y);
@@ -899,6 +1146,10 @@ class ImageEditor {
             }
         }
         if (this.currentTouchAction === 'pinch' && this.activeTouches.size >= 2 && this.initialPinchState) {
+            if (this.longPressTimeoutId) {
+                clearTimeout(this.longPressTimeoutId);
+                this.longPressTimeoutId = null;
+            }
             const touchesForPinch = Array.from(this.activeTouches.values()).slice(0, 2);
             if (touchesForPinch.length < 2)
                 return;
@@ -926,6 +1177,10 @@ class ImageEditor {
                 const dxMove = touch.clientX - this.initialSingleTouchDragAnchor.x;
                 const dyMove = touch.clientY - this.initialSingleTouchDragAnchor.y;
                 if (Math.sqrt(dxMove * dxMove + dyMove * dyMove) > this.SINGLE_TOUCH_DRAG_THRESHOLD) {
+                    if (this.longPressTimeoutId) {
+                        clearTimeout(this.longPressTimeoutId);
+                        this.longPressTimeoutId = null;
+                    }
                     if (this.markerPlacementTimeoutId) {
                         clearTimeout(this.markerPlacementTimeoutId);
                         this.markerPlacementTimeoutId = null;
@@ -940,6 +1195,10 @@ class ImageEditor {
                 }
             }
             if (this.currentTouchAction === 'pan' && this.isPanning) {
+                if (this.longPressTimeoutId) {
+                    clearTimeout(this.longPressTimeoutId);
+                    this.longPressTimeoutId = null;
+                }
                 const dx = touch.clientX - this.lastPanX;
                 const dy = touch.clientY - this.lastPanY;
                 this.panX += dx;
@@ -953,6 +1212,18 @@ class ImageEditor {
     handleTouchEnd(event) {
         if (!this.originalImage)
             return;
+        if (this.longPressTimeoutId) {
+            clearTimeout(this.longPressTimeoutId);
+            this.longPressTimeoutId = null;
+        }
+        if (this.longPressTriggered) {
+            this.longPressTriggered = false;
+            this.pendingMarkerTouchData = null;
+            for (const t of event.changedTouches) {
+                this.activeTouches.delete(t.identifier);
+            }
+            return;
+        }
         let releasedPotentialMarkerIdentifier = null;
         if (this.currentTouchAction === 'potential-marker' && this.pendingMarkerTouchData) {
             for (const t of event.changedTouches) {
@@ -1168,8 +1439,10 @@ class ImageEditor {
     }
     updateButtonStates() {
         const hasImage = !!this.originalImage;
-        const hasHistory = this.history.length > 0;
-        this.undoBtn.disabled = !hasHistory;
+        const canUndo = this.undoStack.length > 0;
+        const canRedo = this.redoStack.length > 0;
+        this.undoBtn.disabled = !canUndo;
+        if (this.redoBtn) this.redoBtn.disabled = !canRedo;
         this.saveImageBtn.disabled = !hasImage;
         this.copyImageBtn.disabled = !hasImage;
         this.resetZoomBtn.disabled = !hasImage;
@@ -1183,7 +1456,7 @@ class ImageEditor {
         const multipleImagesLoaded = this.loadedImages.length > 1;
         this.prevImageBtn.disabled = !multipleImagesLoaded;
         this.nextImageBtn.disabled = !multipleImagesLoaded;
-        this.imageSelectElement.disabled = this.loadedImages.length === 0; // Disable if no images, or if only one enable but not much use
+        this.imageSelectElement.disabled = this.loadedImages.length === 0;
     }
     showStatus(message, isError = false, duration = 3000) {
         if (this.statusTimeout) {
@@ -1247,6 +1520,8 @@ class ImageEditor {
         this.settings.circleOutlineColor = this.circleOutlineColorInput.value;
         this.settings.fontFamily = this.fontFamilyInput.value || "Arial";
         if (this.originalImage && this.history.length > 0) {
+            this.saveStateForUndo();
+            this.redoStack = [];
             this.history.forEach(marker => {
                 marker.fontSize = this.settings.fontSize;
                 marker.font = `${this.settings.fontSize}px ${this.settings.fontFamily}`;
@@ -1256,6 +1531,7 @@ class ImageEditor {
                 marker.fillColor = marker.mode === 'A' ? this.settings.circleFillColorA : this.settings.circleFillColorB;
             });
             this.redrawCanvas();
+            this.updateButtonStates();
             this.showStatus("Settings applied and image updated.", false);
         }
         else {
