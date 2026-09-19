@@ -10,6 +10,8 @@ class ImageEditor {
     TARGET_HEIGHT_PORTRAIT = 1920;
     // DOM Elements
     loadImageInput;
+    insertImageInput; // New for inserting images after current
+    toolbarElement; // New for wheel scroll
     prevImageBtn;
     nextImageBtn;
     imageSelectElement; // New
@@ -91,7 +93,9 @@ class ImageEditor {
         this.canvas = document.getElementById('imageCanvas');
         this.ctx = this.canvas.getContext('2d');
         // Toolbar
+        this.toolbarElement = document.getElementById('mainToolbar');
         this.loadImageInput = document.getElementById('loadImageInput');
+        this.insertImageInput = document.getElementById('insertImageInput');
         this.prevImageBtn = document.getElementById('prevImageBtn');
         this.nextImageBtn = document.getElementById('nextImageBtn');
         this.imageSelectElement = document.getElementById('imageSelect'); // New
@@ -134,7 +138,18 @@ class ImageEditor {
         this.updateImageDropdown(); // New: Initial population
     }
     bindEvents() {
+        if (this.toolbarElement) {
+            this.toolbarElement.addEventListener('wheel', (e) => {
+                if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                    e.preventDefault();
+                    this.toolbarElement.scrollLeft += e.deltaY;
+                }
+            }, { passive: false });
+        }
         this.loadImageInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        if (this.insertImageInput) {
+            this.insertImageInput.addEventListener('change', (e) => this.handleInsertFileSelect(e));
+        }
         this.prevImageBtn.addEventListener('click', () => this.navigateToImage(-1));
         this.nextImageBtn.addEventListener('click', () => this.navigateToImage(1));
         this.imageSelectElement.addEventListener('change', () => this.handleImageSelectChange()); // New
@@ -145,10 +160,10 @@ class ImageEditor {
         this.saveImageBtn.addEventListener('click', () => this.saveImage());
         this.copyImageBtn.addEventListener('click', () => this.copyImageToClipboard());
         this.pasteImageBtn.addEventListener('click', () => this.handlePaste());
-        this.clearAllImagesBtn.addEventListener('click', () => this.confirmAndClearAllImages());
+        if (this.clearAllImagesBtn) this.clearAllImagesBtn.addEventListener('click', () => this.confirmAndClearAllImages());
         document.addEventListener('paste', (e) => this.handleNativePaste(e));
         this.resetZoomBtn.addEventListener('click', () => this.resetZoomAndPan());
-        this.settingsBtn.addEventListener('click', () => this.openSettingsModal());
+        if (this.settingsBtn) this.settingsBtn.addEventListener('click', () => this.openSettingsModal());
         // Canvas Mouse Events
         this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
         this.canvas.addEventListener('wheel', (e) => this.handleWheelZoom(e), { passive: false });
@@ -368,6 +383,10 @@ class ImageEditor {
             this.showStatus("No image files selected.", true);
             return;
         }
+        // Natural sort files by name (e.g. 1, 2, 10 instead of 1, 10, 2)
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        filesToLoad.sort((a, b) => collator.compare(a.name, b.name));
+
         const wasImageListEmpty = this.loadedImages.length === 0;
         const newEntries = await this._processAndAddFiles(filesToLoad);
         if (newEntries.length === 0) {
@@ -388,6 +407,7 @@ class ImageEditor {
             }
         }
         else {
+            this.saveCurrentState();
             const firstNewImageOriginalIndex = this.loadedImages.length;
             this.loadedImages.push(...newEntries);
             this.currentImageIndex = firstNewImageOriginalIndex;
@@ -401,6 +421,45 @@ class ImageEditor {
         }
         this.updateButtonStates();
         // updateImageDropdown is called by switchToImage
+    }
+    async handleInsertFileSelect(event) {
+        const input = event.target;
+        if (!input.files || input.files.length === 0)
+            return;
+        const filesToLoad = Array.from(input.files);
+        input.value = '';
+        if (filesToLoad.length === 0)
+            return;
+
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        filesToLoad.sort((a, b) => collator.compare(a.name, b.name));
+
+        const newEntries = await this._processAndAddFiles(filesToLoad);
+        if (newEntries.length === 0) {
+            if (filesToLoad.filter(f => f.type.startsWith('image/')).length > 0) {
+                this.showStatus("Failed to load any of the selected images.", true);
+            }
+            return;
+        }
+
+        this.saveCurrentState();
+
+        if (this.loadedImages.length === 0) {
+            this.loadedImages = newEntries;
+            this.currentImageIndex = 0;
+            this.switchToImage(0);
+        } else {
+            const insertIndex = this.currentImageIndex + 1;
+            this.loadedImages.splice(insertIndex, 0, ...newEntries);
+            this.switchToImage(insertIndex);
+        }
+
+        if (newEntries.length === 1) {
+            this.showStatus(`Inserted image "${this.truncateFilename(newEntries[0].name)}" after current. Total: ${this.loadedImages.length}.`, false);
+        } else {
+            this.showStatus(`Inserted ${newEntries.length} images after current. Total: ${this.loadedImages.length}.`, false);
+        }
+        this.updateButtonStates();
     }
     handleDragOver(event) {
         event.preventDefault();
@@ -422,6 +481,9 @@ class ImageEditor {
             this.showStatus('No files dropped.', true);
             return;
         }
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        imageFilesToLoad.sort((a, b) => collator.compare(a.name, b.name));
+
         const wasImageListEmpty = this.loadedImages.length === 0;
         const newEntries = await this._processAndAddFiles(imageFilesToLoad);
         if (newEntries.length === 0) {
@@ -442,6 +504,7 @@ class ImageEditor {
             }
         }
         else {
+            this.saveCurrentState();
             const firstNewImageOriginalIndex = this.loadedImages.length;
             this.loadedImages.push(...newEntries);
             this.currentImageIndex = firstNewImageOriginalIndex;
@@ -527,6 +590,7 @@ class ImageEditor {
                     this.showStatus(`Pasted image "${this.truncateFilename(displayName)}" loaded.`, false);
                 }
                 else {
+                    this.saveCurrentState();
                     this.loadedImages.push(newImageEntry);
                     this.currentImageIndex = this.loadedImages.length - 1;
                     this.switchToImage(this.currentImageIndex);
@@ -570,9 +634,7 @@ class ImageEditor {
         this.updateCursorStyle();
         this.updateImageDropdown(); // New: ensure dropdown reflects change
     }
-    navigateToImage(direction) {
-        if (this.loadedImages.length <= 1)
-            return;
+    saveCurrentState() {
         if (this.currentImageIndex !== -1 && this.currentImageIndex < this.loadedImages.length && this.loadedImages[this.currentImageIndex]) {
             this.loadedImages[this.currentImageIndex].history = [...this.history];
             this.loadedImages[this.currentImageIndex].undoStack = [...this.undoStack];
@@ -580,6 +642,11 @@ class ImageEditor {
             this.loadedImages[this.currentImageIndex].counterA = this.counterA;
             this.loadedImages[this.currentImageIndex].counterB = this.counterB;
         }
+    }
+    navigateToImage(direction) {
+        if (this.loadedImages.length <= 1)
+            return;
+        this.saveCurrentState();
         let newIndex = this.currentImageIndex + direction;
         if (newIndex < 0)
             newIndex = this.loadedImages.length - 1;
@@ -590,37 +657,123 @@ class ImageEditor {
         // updateImageDropdown is called by switchToImage
     }
     handleImageSelectChange() {
-        const selectedIndex = parseInt(this.imageSelectElement.value, 10);
-        if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= this.loadedImages.length || selectedIndex === this.currentImageIndex) {
-            // If invalid index, or same as current, do nothing or ensure dropdown is synced if it got out of sync
-            if (this.currentImageIndex !== -1)
+        const val = this.imageSelectElement.value;
+        if (val.startsWith('action:')) {
+            // Restore visual selection in dropdown back to the current active image (or default)
+            if (this.currentImageIndex !== -1) {
                 this.imageSelectElement.value = this.currentImageIndex.toString();
+            } else {
+                this.imageSelectElement.selectedIndex = 0;
+            }
+            const action = val.substring('action:'.length);
+            switch (action) {
+                case 'insert_after':
+                    if (this.insertImageInput) {
+                        this.insertImageInput.click();
+                    }
+                    break;
+                case 'move_prev':
+                    this.moveCurrentImage(-1);
+                    break;
+                case 'move_next':
+                    this.moveCurrentImage(1);
+                    break;
+                case 'sort_name':
+                    this.sortLoadedImagesNaturally();
+                    break;
+                case 'delete_current':
+                    this.deleteCurrentImage();
+                    break;
+                case 'settings':
+                    this.openSettingsModal();
+                    break;
+                case 'clear_all':
+                    this.confirmAndClearAllImages();
+                    break;
+            }
             return;
         }
-        if (this.currentImageIndex !== -1 && this.currentImageIndex < this.loadedImages.length) {
-            // Save state of the currently active image before switching
-            this.loadedImages[this.currentImageIndex].history = [...this.history];
-            this.loadedImages[this.currentImageIndex].undoStack = [...this.undoStack];
-            this.loadedImages[this.currentImageIndex].redoStack = [...this.redoStack];
-            this.loadedImages[this.currentImageIndex].counterA = this.counterA;
-            this.loadedImages[this.currentImageIndex].counterB = this.counterB;
+
+        const selectedIndex = parseInt(val, 10);
+        if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= this.loadedImages.length || selectedIndex === this.currentImageIndex) {
+            if (this.currentImageIndex !== -1)
+                this.imageSelectElement.value = this.currentImageIndex.toString();
+            else
+                this.imageSelectElement.selectedIndex = 0;
+            return;
         }
+        this.saveCurrentState();
         this.switchToImage(selectedIndex);
         this.showStatus(`Switched to image: ${this.truncateFilename(this.loadedImages[selectedIndex].name)}`, false, 1500);
         // updateImageDropdown is called by switchToImage
     }
+    moveCurrentImage(direction) {
+        if (this.loadedImages.length <= 1) return;
+        const newIndex = this.currentImageIndex + direction;
+        if (newIndex < 0 || newIndex >= this.loadedImages.length) return;
+
+        this.saveCurrentState();
+        const [movedItem] = this.loadedImages.splice(this.currentImageIndex, 1);
+        this.loadedImages.splice(newIndex, 0, movedItem);
+
+        this.switchToImage(newIndex);
+        this.showStatus(`Moved image to position ${newIndex + 1} of ${this.loadedImages.length}.`, false, 1500);
+    }
+    sortLoadedImagesNaturally() {
+        if (this.loadedImages.length <= 1) return;
+        this.saveCurrentState();
+        const currentItem = this.loadedImages[this.currentImageIndex];
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        this.loadedImages.sort((a, b) => collator.compare(a.name, b.name));
+
+        const newIndex = this.loadedImages.indexOf(currentItem);
+        this.switchToImage(newIndex !== -1 ? newIndex : 0);
+        this.showStatus("Images sorted naturally by filename (A-Z).", false, 2000);
+    }
+    deleteCurrentImage() {
+        if (this.currentImageIndex < 0 || this.currentImageIndex >= this.loadedImages.length) return;
+        const currentName = this.truncateFilename(this.loadedImages[this.currentImageIndex].name);
+        this.openConfirmModal(`Are you sure you want to delete image "${currentName}"?`, () => this.performDeleteCurrentImage());
+    }
+    performDeleteCurrentImage() {
+        if (this.currentImageIndex < 0 || this.currentImageIndex >= this.loadedImages.length) return;
+        this.loadedImages.splice(this.currentImageIndex, 1);
+        if (this.loadedImages.length === 0) {
+            this.performClearAllImages();
+            return;
+        }
+        let nextIndex = this.currentImageIndex;
+        if (nextIndex >= this.loadedImages.length) {
+            nextIndex = this.loadedImages.length - 1;
+        }
+        this.switchToImage(nextIndex);
+        this.showStatus("Image deleted.", false, 1500);
+    }
     updateImageDropdown() {
         this.imageSelectElement.innerHTML = ''; // Clear existing options
+        this.imageSelectElement.disabled = false;
+
         if (this.loadedImages.length === 0) {
             const defaultOption = document.createElement('option');
             defaultOption.textContent = "No images loaded";
             defaultOption.value = "-1";
             defaultOption.disabled = true;
+            defaultOption.selected = true;
             this.imageSelectElement.appendChild(defaultOption);
-            this.imageSelectElement.disabled = true;
+
+            const toolsGroup = document.createElement('optgroup');
+            toolsGroup.label = '── Tools / System ──';
+            const setOpt = document.createElement('option');
+            setOpt.value = 'action:settings';
+            setOpt.textContent = '⚙️ ตั้งค่า (Settings)';
+            toolsGroup.appendChild(setOpt);
+            this.imageSelectElement.appendChild(toolsGroup);
             return;
         }
-        this.imageSelectElement.disabled = this.loadedImages.length <= 1;
+
+        // Group 1: Images List
+        const imgGroup = document.createElement('optgroup');
+        imgGroup.label = `── Images (${this.loadedImages.length}) ──`;
         this.loadedImages.forEach((imgEntry, index) => {
             const option = document.createElement('option');
             option.value = index.toString();
@@ -628,8 +781,48 @@ class ImageEditor {
             if (index === this.currentImageIndex) {
                 option.selected = true;
             }
-            this.imageSelectElement.appendChild(option);
+            imgGroup.appendChild(option);
         });
+        this.imageSelectElement.appendChild(imgGroup);
+
+        // Group 2: Actions & Reorder
+        const actionGroup = document.createElement('optgroup');
+        actionGroup.label = '── Actions / Reorder ──';
+
+        const addActionOption = (value, text, disabled = false) => {
+            const opt = document.createElement('option');
+            opt.value = `action:${value}`;
+            opt.textContent = text;
+            if (disabled) opt.disabled = true;
+            actionGroup.appendChild(opt);
+        };
+
+        addActionOption('insert_after', '➕ แทรกภาพต่อจากนี้... (Insert)');
+        addActionOption('move_prev', '⬅️ ย้ายภาพนี้ไปก่อนหน้า (Move Prev)', this.currentImageIndex <= 0);
+        addActionOption('move_next', '➡️ ย้ายภาพนี้ไปถัดไป (Move Next)', this.currentImageIndex >= this.loadedImages.length - 1);
+        addActionOption('sort_name', '🔤 จัดเรียงชื่อไฟล์ (A-Z Sort)', this.loadedImages.length <= 1);
+        addActionOption('delete_current', '🗑️ ลบเฉพาะภาพนี้ (Delete)');
+
+        this.imageSelectElement.appendChild(actionGroup);
+
+        // Group 3: Tools & System
+        const toolsGroup = document.createElement('optgroup');
+        toolsGroup.label = '── Tools / System ──';
+        const setOpt = document.createElement('option');
+        setOpt.value = 'action:settings';
+        setOpt.textContent = '⚙️ ตั้งค่า (Settings)';
+        toolsGroup.appendChild(setOpt);
+
+        const clearOpt = document.createElement('option');
+        clearOpt.value = 'action:clear_all';
+        clearOpt.textContent = '💥 ล้างภาพทั้งหมด (Clear All)';
+        toolsGroup.appendChild(clearOpt);
+
+        this.imageSelectElement.appendChild(toolsGroup);
+
+        if (this.currentImageIndex !== -1) {
+            this.imageSelectElement.value = this.currentImageIndex.toString();
+        }
     }
     clearCanvasAndState() {
         this.originalImage = null;
@@ -1446,17 +1639,17 @@ class ImageEditor {
         this.saveImageBtn.disabled = !hasImage;
         this.copyImageBtn.disabled = !hasImage;
         this.resetZoomBtn.disabled = !hasImage;
-        this.settingsBtn.disabled = false;
+        if (this.settingsBtn) this.settingsBtn.disabled = false;
         this.modeABtn.disabled = !hasImage;
         this.modeBBtn.disabled = !hasImage;
-        this.clearAllImagesBtn.disabled = this.loadedImages.length === 0;
+        if (this.clearAllImagesBtn) this.clearAllImagesBtn.disabled = this.loadedImages.length === 0;
         if (!hasImage && this.drawingMode) {
             this.setDrawingMode(null);
         }
         const multipleImagesLoaded = this.loadedImages.length > 1;
         this.prevImageBtn.disabled = !multipleImagesLoaded;
         this.nextImageBtn.disabled = !multipleImagesLoaded;
-        this.imageSelectElement.disabled = this.loadedImages.length === 0;
+        this.imageSelectElement.disabled = false;
     }
     showStatus(message, isError = false, duration = 3000) {
         if (this.statusTimeout) {

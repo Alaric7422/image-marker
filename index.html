@@ -47,14 +47,26 @@
 
         .toolbar {
             display: flex;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
             padding: 3px 6px;
             background-color: var(--toolbar-bg);
             border-bottom: 1px solid var(--input-border);
             gap: 3px;
             z-index: 10;
+            flex-shrink: 0;
+        }
+
+        .toolbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .toolbar>* {
             flex-shrink: 0;
         }
 
@@ -80,10 +92,17 @@
 
         .toolbar select {
             padding: 2px 3px;
-            min-width: 45px;
-            max-width: 75px;
-            width: 65px;
+            min-width: 80px;
+            max-width: 80px;
             text-overflow: ellipsis;
+        }
+
+        .toolbar select optgroup {
+            background-color: var(--toolbar-bg);
+            color: #9ca3af;
+            font-size: 10px;
+            font-style: normal;
+            font-weight: 600;
         }
 
         .toolbar button:hover,
@@ -325,8 +344,8 @@
             }
 
             .toolbar select {
-                max-width: 58px;
-                width: 55px;
+                max-width: 100px;
+                min-width: 65px;
             }
 
             .status-bar-flex-container {
@@ -345,7 +364,7 @@
             .toolbar {
                 gap: 2px;
                 padding: 2px 3px;
-                justify-content: center;
+                justify-content: flex-start;
             }
 
             .toolbar button,
@@ -357,8 +376,8 @@
             }
 
             .toolbar select {
-                max-width: 48px;
-                width: 45px;
+                max-width: 70px;
+                min-width: 70px;
                 font-size: 9.5px;
             }
 
@@ -377,8 +396,9 @@
 </head>
 
 <body>
-    <div class="toolbar">
+    <div class="toolbar" id="mainToolbar">
         <input type="file" id="loadImageInput" accept="image/*" multiple>
+        <input type="file" id="insertImageInput" accept="image/*" multiple style="display: none;">
         <label for="loadImageInput" class="file-input-label" role="button" aria-label="Load Images">🖼️ Open</label>
         <button id="pasteImageBtn" title="Paste Image from Clipboard (Ctrl+V)">📥 Paste</button>
         <button id="saveImageBtn" title="Save Image (Ctrl+S)" disabled>💾 Save</button>
@@ -395,8 +415,6 @@
         <button id="modeBBtn" title="Activate Mode B for numbering (Key: B or 2)">Mode B</button>
 
         <button id="resetZoomBtn" title="Reset Zoom and Pan (Ctrl+R / 0)" disabled>🔍 Reset</button>
-        <button id="clearAllImagesBtn" title="Clear all loaded images" disabled>🗑️ Clear</button>
-        <button id="settingsBtn" title="Open Settings">⚙️ Set</button>
     </div>
 
     <div class="canvas-container" id="canvasDropArea">
