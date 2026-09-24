@@ -5,6 +5,9 @@
 class ImageEditor {
     canvas;
     ctx;
+    dpr = 1;
+    displayWidth = 0;
+    displayHeight = 0;
     // --- ค่าคงที่สำหรับขนาดเป้าหมาย ---
     TARGET_WIDTH_LANDSCAPE = 1920;
     TARGET_HEIGHT_PORTRAIT = 1920;
@@ -281,13 +284,13 @@ class ImageEditor {
             if (e.key === '+' || e.key === '=') {
                 e.preventDefault();
                 if (this.originalImage)
-                    this.applyZoom(1.2, this.canvas.width / 2, this.canvas.height / 2);
+                    this.applyZoom(1.2, this.displayWidth / 2, this.displayHeight / 2);
                 return;
             }
             if (e.key === '-' || e.key === '_') {
                 e.preventDefault();
                 if (this.originalImage)
-                    this.applyZoom(1 / 1.2, this.canvas.width / 2, this.canvas.height / 2);
+                    this.applyZoom(1 / 1.2, this.displayWidth / 2, this.displayHeight / 2);
                 return;
             }
             if (e.key === '0') {
@@ -319,8 +322,19 @@ class ImageEditor {
     }
     resizeCanvas() {
         const container = this.canvas.parentElement;
-        this.canvas.width = container.clientWidth;
-        this.canvas.height = container.clientHeight;
+        if (!container) return;
+        this.dpr = window.devicePixelRatio || 1;
+        this.displayWidth = container.clientWidth;
+        this.displayHeight = container.clientHeight;
+        this.canvas.width = Math.round(this.displayWidth * this.dpr);
+        this.canvas.height = Math.round(this.displayHeight * this.dpr);
+        this.canvas.style.width = `${this.displayWidth}px`;
+        this.canvas.style.height = `${this.displayHeight}px`;
+
+        if (window.matchMedia) {
+            window.matchMedia(`(resolution: ${this.dpr}dppx)`).addEventListener('change', () => this.resizeCanvas(), { once: true });
+        }
+
         if (this.originalImage) {
             this.calculateMinZoom();
             if (this.zoomLevel < this.minZoomLevel) {
@@ -329,6 +343,7 @@ class ImageEditor {
             this.redrawCanvas();
         }
         else {
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
             this.ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         }
@@ -835,6 +850,7 @@ class ImageEditor {
         this.zoomLevel = 1.0;
         this.panX = 0;
         this.panY = 0;
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -858,14 +874,14 @@ class ImageEditor {
         this.showStatus("All images cleared.", false);
     }
     calculateMinZoom() {
-        if (!this.originalImage || this.canvas.width <= 0 || this.canvas.height <= 0) {
+        if (!this.originalImage || this.displayWidth <= 0 || this.displayHeight <= 0) {
             this.minZoomLevel = 0.1;
             return;
         }
-        const hRatio = this.canvas.width / this.originalImage.naturalWidth;
-        const vRatio = this.canvas.height / this.originalImage.naturalHeight;
+        const hRatio = this.displayWidth / this.originalImage.naturalWidth;
+        const vRatio = this.displayHeight / this.originalImage.naturalHeight;
         this.minZoomLevel = Math.min(hRatio, vRatio);
-        if (this.originalImage.naturalWidth < this.canvas.width && this.originalImage.naturalHeight < this.canvas.height) {
+        if (this.originalImage.naturalWidth < this.displayWidth && this.originalImage.naturalHeight < this.displayHeight) {
             this.minZoomLevel = Math.min(this.minZoomLevel, 1.0);
         }
         if (this.minZoomLevel <= 0)
@@ -908,8 +924,8 @@ class ImageEditor {
         const canvasY = screenY - rect.top;
         const imgDisplayWidth = this.originalImage.naturalWidth * this.zoomLevel;
         const imgDisplayHeight = this.originalImage.naturalHeight * this.zoomLevel;
-        const imgCanvasX = (this.canvas.width - imgDisplayWidth) / 2 + this.panX;
-        const imgCanvasY = (this.canvas.height - imgDisplayHeight) / 2 + this.panY;
+        const imgCanvasX = (this.displayWidth - imgDisplayWidth) / 2 + this.panX;
+        const imgCanvasY = (this.displayHeight - imgDisplayHeight) / 2 + this.panY;
         if (canvasX < imgCanvasX || canvasX > imgCanvasX + imgDisplayWidth ||
             canvasY < imgCanvasY || canvasY > imgCanvasY + imgDisplayHeight) {
             return null;
@@ -1044,8 +1060,8 @@ class ImageEditor {
         const canvasY = screenY - rect.top;
         const imgDisplayWidth = this.originalImage.naturalWidth * this.zoomLevel;
         const imgDisplayHeight = this.originalImage.naturalHeight * this.zoomLevel;
-        const drawX = (this.canvas.width - imgDisplayWidth) / 2 + this.panX;
-        const drawY = (this.canvas.height - imgDisplayHeight) / 2 + this.panY;
+        const drawX = (this.displayWidth - imgDisplayWidth) / 2 + this.panX;
+        const drawY = (this.displayHeight - imgDisplayHeight) / 2 + this.panY;
 
         // Iterate in reverse to detect topmost marker first
         for (let i = this.history.length - 1; i >= 0; i--) {
@@ -1071,18 +1087,20 @@ class ImageEditor {
         }
     }
     redrawCanvas() {
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         if (!this.originalImage) {
             return;
         }
         this.ctx.save();
+        this.ctx.scale(this.dpr, this.dpr);
         const imgDisplayWidth = this.originalImage.naturalWidth * this.zoomLevel;
         const imgDisplayHeight = this.originalImage.naturalHeight * this.zoomLevel;
-        const drawX = (this.canvas.width - imgDisplayWidth) / 2 + this.panX;
-        const drawY = (this.canvas.height - imgDisplayHeight) / 2 + this.panY;
-        this.ctx.imageSmoothingEnabled = this.zoomLevel < 1;
-        this.ctx.imageSmoothingQuality = this.zoomLevel < 1 ? "medium" : "high";
+        const drawX = (this.displayWidth - imgDisplayWidth) / 2 + this.panX;
+        const drawY = (this.displayHeight - imgDisplayHeight) / 2 + this.panY;
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = "high";
         this.ctx.drawImage(this.originalImage, drawX, drawY, imgDisplayWidth, imgDisplayHeight);
         this.history.forEach((marker, index) => {
             const markerCanvasX = drawX + (marker.x * this.zoomLevel);
@@ -1136,11 +1154,11 @@ class ImageEditor {
         const newZoomLevel = Math.max(this.minZoomLevel, Math.min(this.maxZoomLevel, newZoomLevelProposed));
         if (newZoomLevel === oldZoomLevel)
             return;
-        const imgPointX = (centerX - ((this.canvas.width - this.originalImage.naturalWidth * oldZoomLevel) / 2 + this.panX)) / oldZoomLevel;
-        const imgPointY = (centerY - ((this.canvas.height - this.originalImage.naturalHeight * oldZoomLevel) / 2 + this.panY)) / oldZoomLevel;
+        const imgPointX = (centerX - ((this.displayWidth - this.originalImage.naturalWidth * oldZoomLevel) / 2 + this.panX)) / oldZoomLevel;
+        const imgPointY = (centerY - ((this.displayHeight - this.originalImage.naturalHeight * oldZoomLevel) / 2 + this.panY)) / oldZoomLevel;
         this.zoomLevel = newZoomLevel;
-        this.panX = centerX - imgPointX * this.zoomLevel - (this.canvas.width - this.originalImage.naturalWidth * this.zoomLevel) / 2;
-        this.panY = centerY - imgPointY * this.zoomLevel - (this.canvas.height - this.originalImage.naturalHeight * this.zoomLevel) / 2;
+        this.panX = centerX - imgPointX * this.zoomLevel - (this.displayWidth - this.originalImage.naturalWidth * this.zoomLevel) / 2;
+        this.panY = centerY - imgPointY * this.zoomLevel - (this.displayHeight - this.originalImage.naturalHeight * this.zoomLevel) / 2;
         this.redrawCanvas();
     }
     handleMouseDown(event) {
@@ -1263,8 +1281,8 @@ class ImageEditor {
             const canvasRect = this.canvas.getBoundingClientRect();
             const pinchCanvasMidX = ((t1.clientX + t2.clientX) / 2) - canvasRect.left;
             const pinchCanvasMidY = ((t1.clientY + t2.clientY) / 2) - canvasRect.top;
-            const imgPointX = (pinchCanvasMidX - ((this.canvas.width - this.originalImage.naturalWidth * this.zoomLevel) / 2 + this.panX)) / this.zoomLevel;
-            const imgPointY = (pinchCanvasMidY - ((this.canvas.height - this.originalImage.naturalHeight * this.zoomLevel) / 2 + this.panY)) / this.zoomLevel;
+            const imgPointX = (pinchCanvasMidX - ((this.displayWidth - this.originalImage.naturalWidth * this.zoomLevel) / 2 + this.panX)) / this.zoomLevel;
+            const imgPointY = (pinchCanvasMidY - ((this.displayHeight - this.originalImage.naturalHeight * this.zoomLevel) / 2 + this.panY)) / this.zoomLevel;
             this.initialPinchState = {
                 distance: distance,
                 centerX: pinchCanvasMidX,
@@ -1360,8 +1378,8 @@ class ImageEditor {
             const canvasRect = this.canvas.getBoundingClientRect();
             const currentPinchCanvasMidX = ((t1.clientX + t2.clientX) / 2) - canvasRect.left;
             const currentPinchCanvasMidY = ((t1.clientY + t2.clientY) / 2) - canvasRect.top;
-            this.panX = currentPinchCanvasMidX - this.initialPinchState.imagePointX * this.zoomLevel - (this.canvas.width - this.originalImage.naturalWidth * this.zoomLevel) / 2;
-            this.panY = currentPinchCanvasMidY - this.initialPinchState.imagePointY * this.zoomLevel - (this.canvas.height - this.originalImage.naturalHeight * this.zoomLevel) / 2;
+            this.panX = currentPinchCanvasMidX - this.initialPinchState.imagePointX * this.zoomLevel - (this.displayWidth - this.originalImage.naturalWidth * this.zoomLevel) / 2;
+            this.panY = currentPinchCanvasMidY - this.initialPinchState.imagePointY * this.zoomLevel - (this.displayHeight - this.originalImage.naturalHeight * this.zoomLevel) / 2;
             this.redrawCanvas();
         }
         else if (this.activeTouches.size === 1) {
@@ -1498,9 +1516,9 @@ class ImageEditor {
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 const canvasRect = this.canvas.getBoundingClientRect();
                 const pinchCanvasMidX = ((t1.clientX + t2.clientX) / 2) - canvasRect.left;
-                const pinchCanvasMidY = ((t1.clientY + t2.clientY) / 2) - canvasRect.top;
-                const imgPointX = (pinchCanvasMidX - ((this.canvas.width - this.originalImage.naturalWidth * this.zoomLevel) / 2 + this.panX)) / this.zoomLevel;
-                const imgPointY = (pinchCanvasMidY - ((this.canvas.height - this.originalImage.naturalHeight * this.zoomLevel) / 2 + this.panY)) / this.zoomLevel;
+                const pinchCanvasMidY = ((t1.clientX + t2.clientX) / 2) - canvasRect.top;
+                const imgPointX = (pinchCanvasMidX - ((this.displayWidth - this.originalImage.naturalWidth * this.zoomLevel) / 2 + this.panX)) / this.zoomLevel;
+                const imgPointY = (pinchCanvasMidY - ((this.displayHeight - this.originalImage.naturalHeight * this.zoomLevel) / 2 + this.panY)) / this.zoomLevel;
                 this.initialPinchState = {
                     distance: distance, centerX: pinchCanvasMidX, centerY: pinchCanvasMidY,
                     panX: this.panX, panY: this.panY, zoomLevel: this.zoomLevel,
@@ -1551,6 +1569,8 @@ class ImageEditor {
             tempCtx.fillStyle = 'white';
             tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
         }
+        tempCtx.imageSmoothingEnabled = true;
+        tempCtx.imageSmoothingQuality = 'high';
         tempCtx.drawImage(this.originalImage, 0, 0, targetWidth, targetHeight);
         // Draw scaled markers
         this.history.forEach(marker => {
