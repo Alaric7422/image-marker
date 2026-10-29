@@ -329,6 +329,30 @@
             background-color: #b91c1c;
         }
 
+        .pdf-dialog {
+            background: var(--modal-bg);
+            color: var(--text-color);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 20px;
+            width: min(420px, 94vw);
+        }
+
+        .pdf-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+        .pdf-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+        .pdf-dialog p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+        .pdf-dialog label { display: block; margin: 12px 0 5px; font-size: 13px; }
+        .pdf-dialog input, .pdf-dialog select {
+            width: 100%;
+            padding: 8px;
+            background: var(--input-bg);
+            color: var(--text-color);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+        }
+        .pdf-dialog progress { width: 100%; margin-top: 12px; }
+        .pdf-dialog .pdf-error { color: #fca5a5; }
+
         /* Responsive Breakpoints */
         @media (max-width: 768px) {
             .toolbar {
@@ -397,9 +421,9 @@
 
 <body>
     <div class="toolbar" id="mainToolbar">
-        <input type="file" id="loadImageInput" accept="image/*" multiple>
-        <input type="file" id="insertImageInput" accept="image/*" multiple style="display: none;">
-        <label for="loadImageInput" class="file-input-label" role="button" aria-label="Load Images">🖼️ Open</label>
+        <input type="file" id="loadImageInput" accept="image/*,application/pdf,.pdf" multiple>
+        <input type="file" id="insertImageInput" accept="image/*,application/pdf,.pdf" multiple style="display: none;">
+        <label for="loadImageInput" class="file-input-label" role="button" aria-label="Open images or PDF" title="Open images or PDF (or drag files onto the canvas)">🖼️ Open / PDF</label>
         <button id="pasteImageBtn" title="Paste Image from Clipboard (Ctrl+V)">📥 Paste</button>
         <button id="saveImageBtn" title="Save Image (Ctrl+S)" disabled>💾 Save</button>
         <button id="copyImageBtn" title="Copy current image with markers to clipboard (Ctrl+C)" disabled>📋
@@ -479,6 +503,27 @@
         </div>
     </div>
 
+    <dialog id="pdfImportDialog" class="pdf-dialog" aria-labelledby="pdfImportTitle" aria-describedby="pdfImportDescription">
+        <h2 id="pdfImportTitle">Import PDF as images</h2>
+        <p id="pdfImportDescription"></p>
+        <form id="pdfImportForm" hidden>
+            <label for="pdfPagesInput">Pages</label>
+            <input id="pdfPagesInput" type="text" placeholder="All pages, or e.g. 1-3, 5" aria-describedby="pdfPagesHelp pdfImportError" autocomplete="off">
+            <p id="pdfPagesHelp">Leave blank for all pages. Pages are imported in document order.</p>
+            <label for="pdfResolutionSelect">Image quality</label>
+            <select id="pdfResolutionSelect">
+                <option value="1.3333333333333333">Standard (96 DPI)</option>
+                <option value="2" selected>High (144 DPI)</option>
+                <option value="3">Very high (216 DPI)</option>
+            </select>
+            <p>Converted on your device. Large pages are limited to 3840 px per side. Saved images use the app's 1920 px limit.</p>
+            <p id="pdfImportError" class="pdf-error" role="alert"></p>
+            <div class="modal-buttons"><button type="submit">Import pages</button></div>
+        </form>
+        <progress id="pdfImportProgress" aria-label="PDF conversion progress"></progress>
+        <p id="pdfImportStatus" role="status" aria-live="polite">Opening PDF…</p>
+        <div class="modal-buttons"><button id="pdfImportCancelBtn" type="button">Cancel PDF</button></div>
+    </dialog>
     <script type="module" src="index.js"></script>
 </body>
 

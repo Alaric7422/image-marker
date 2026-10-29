@@ -51,6 +51,7 @@ class ImageEditor {
     onConfirmAction = null;
     // State
     loadedImages = [];
+    isImporting = false;
     currentImageIndex = -1;
     originalImage = null;
     history = [];
@@ -192,6 +193,7 @@ class ImageEditor {
         this.confirmModalCancelBtn.addEventListener('click', () => this.closeConfirmModal());
         window.addEventListener('resize', () => this.resizeCanvas());
         document.addEventListener('keydown', (e) => {
+            if (document.getElementById('pdfImportDialog').open) return;
             if (e.key === 'Escape') {
                 if (this.settingsModal.style.display === 'flex') {
                     this.closeSettingsModal();
@@ -220,6 +222,7 @@ class ImageEditor {
         });
     }
     handleKeyboardShortcuts(e) {
+        if (document.getElementById('pdfImportDialog').open) return;
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
             return;
         }
@@ -350,131 +353,82 @@ class ImageEditor {
         this.updateCursorStyle();
     }
     async _processAndAddFiles(files) {
-        const loadImagePromises = files.map(file => {
-            return new Promise((resolve) => {
-                if (!file.type.startsWith('image/')) {
-                    this.showStatus(`File ${file.name} is not a supported image type.`, true);
-                    resolve(null);
-                    return;
+        const entries = [];
+        const errors = [];
+        let cancelledPdfs = 0;
+        for (const file of files) {
+            try {
+                if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+                    const { importPdf } = await import('./pdf-import.js');
+                    const pages = await importPdf(file);
+                    if (pages === null) cancelledPdfs++;
+                    else entries.push(...pages.map(page => this.createImageEntry(page)));
+                    continue;
                 }
-                const reader = new FileReader();
-                reader.onload = (e_reader) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        resolve({
-                            file: file,
-                            name: file.name,
-                            image: img,
-                            history: [],
-                            undoStack: [],
-                            redoStack: [],
-                            counterA: 1,
-                            counterB: 1,
-                            mimeType: file.type // Store mimeType
-                        });
+                if (!file.type.startsWith('image/')) throw new Error('Unsupported file type. Choose images or PDFs.');
+                const image = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e_reader) => {
+                        const img = new Image();
+                        img.onload = () => resolve(img);
+                        img.onerror = () => reject(new Error('Could not decode this image.'));
+                        img.src = e_reader.target?.result;
                     };
-                    img.onerror = () => {
-                        this.showStatus(`Error loading image: ${file.name}`, true);
-                        resolve(null);
-                    };
-                    img.src = e_reader.target?.result;
-                };
-                reader.onerror = () => {
-                    this.showStatus(`Error reading file: ${file.name}`, true);
-                    resolve(null);
-                };
-                reader.readAsDataURL(file);
-            });
-        });
-        return (await Promise.all(loadImagePromises)).filter(entry => entry !== null);
+                    reader.onerror = () => reject(new Error('Could not read this file.'));
+                    reader.readAsDataURL(file);
+                });
+                entries.push(this.createImageEntry({ file, name: file.name, image, mimeType: file.type }));
+            } catch (err) {
+                errors.push(`${file.name}: ${err.message}`);
+            }
+        }
+        return { entries, errors, cancelledPdfs };
+    }
+    createImageEntry(source) {
+        return { ...source, history: [], undoStack: [], redoStack: [], counterA: 1, counterB: 1 };
+    }
+    async importFiles(files, insertAfter = false) {
+        if (this.isImporting) {
+            this.showStatus('Please finish the current import first.', false);
+            return;
+        }
+        this.isImporting = true;
+        this.loadImageInput.disabled = true;
+        if (this.insertImageInput) this.insertImageInput.disabled = true;
+        this.canvasDropArea.setAttribute('aria-busy', 'true');
+        try {
+            const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+            files.sort((a, b) => collator.compare(a.name, b.name));
+            this.showStatus('Loading images / PDF…', false, 0);
+            const { entries, errors, cancelledPdfs } = await this._processAndAddFiles(files);
+            if (entries.length) {
+                this.saveCurrentState();
+                const index = insertAfter ? this.currentImageIndex + 1 : this.loadedImages.length;
+                this.loadedImages.splice(index, 0, ...entries);
+                this.switchToImage(index);
+            }
+            const summary = entries.length ? `${entries.length} image(s) loaded. Total: ${this.loadedImages.length}.` : 'No images imported.';
+            const cancelled = cancelledPdfs ? ` ${cancelledPdfs} PDF import(s) cancelled.` : '';
+            this.showStatus(`${summary}${cancelled}${errors.length ? ` ${errors.join(' | ')}` : ''}`, errors.length > 0, errors.length ? 12000 : 5000);
+        } catch (err) {
+            this.showStatus(`Import failed: ${err.message}`, true, 12000);
+        } finally {
+            this.isImporting = false;
+            this.loadImageInput.disabled = false;
+            if (this.insertImageInput) this.insertImageInput.disabled = false;
+            this.canvasDropArea.removeAttribute('aria-busy');
+            this.updateButtonStates();
+        }
     }
     async handleFileSelect(event) {
-        const input = event.target;
-        if (!input.files || input.files.length === 0)
-            return;
-        const filesToLoad = Array.from(input.files);
-        input.value = '';
-        if (filesToLoad.length === 0) {
-            this.showStatus("No image files selected.", true);
-            return;
-        }
-        // Natural sort files by name (e.g. 1, 2, 10 instead of 1, 10, 2)
-        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-        filesToLoad.sort((a, b) => collator.compare(a.name, b.name));
-
-        const wasImageListEmpty = this.loadedImages.length === 0;
-        const newEntries = await this._processAndAddFiles(filesToLoad);
-        if (newEntries.length === 0) {
-            if (filesToLoad.filter(f => f.type.startsWith('image/')).length > 0) {
-                this.showStatus("Failed to load any of the selected images.", true);
-            }
-            return;
-        }
-        if (wasImageListEmpty) {
-            this.loadedImages = newEntries;
-            this.currentImageIndex = 0;
-            this.switchToImage(this.currentImageIndex);
-            if (newEntries.length === 1) {
-                this.showStatus(`Image "${this.truncateFilename(newEntries[0].name)}" loaded.`, false);
-            }
-            else {
-                this.showStatus(`${newEntries.length} images loaded. Displaying first.`, false);
-            }
-        }
-        else {
-            this.saveCurrentState();
-            const firstNewImageOriginalIndex = this.loadedImages.length;
-            this.loadedImages.push(...newEntries);
-            this.currentImageIndex = firstNewImageOriginalIndex;
-            this.switchToImage(this.currentImageIndex);
-            if (newEntries.length === 1) {
-                this.showStatus(`Added and displaying image "${this.truncateFilename(newEntries[0].name)}". Total: ${this.loadedImages.length}.`, false);
-            }
-            else {
-                this.showStatus(`Added ${newEntries.length} images. Displaying "${this.truncateFilename(newEntries[0].name)}". Total: ${this.loadedImages.length}.`, false);
-            }
-        }
-        this.updateButtonStates();
-        // updateImageDropdown is called by switchToImage
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        if (files.length) await this.importFiles(files);
     }
     async handleInsertFileSelect(event) {
-        const input = event.target;
-        if (!input.files || input.files.length === 0)
-            return;
-        const filesToLoad = Array.from(input.files);
-        input.value = '';
-        if (filesToLoad.length === 0)
-            return;
-
-        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-        filesToLoad.sort((a, b) => collator.compare(a.name, b.name));
-
-        const newEntries = await this._processAndAddFiles(filesToLoad);
-        if (newEntries.length === 0) {
-            if (filesToLoad.filter(f => f.type.startsWith('image/')).length > 0) {
-                this.showStatus("Failed to load any of the selected images.", true);
-            }
-            return;
-        }
-
-        this.saveCurrentState();
-
-        if (this.loadedImages.length === 0) {
-            this.loadedImages = newEntries;
-            this.currentImageIndex = 0;
-            this.switchToImage(0);
-        } else {
-            const insertIndex = this.currentImageIndex + 1;
-            this.loadedImages.splice(insertIndex, 0, ...newEntries);
-            this.switchToImage(insertIndex);
-        }
-
-        if (newEntries.length === 1) {
-            this.showStatus(`Inserted image "${this.truncateFilename(newEntries[0].name)}" after current. Total: ${this.loadedImages.length}.`, false);
-        } else {
-            this.showStatus(`Inserted ${newEntries.length} images after current. Total: ${this.loadedImages.length}.`, false);
-        }
-        this.updateButtonStates();
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        if (files.length) await this.importFiles(files, true);
     }
     handleDragOver(event) {
         event.preventDefault();
@@ -488,53 +442,11 @@ class ImageEditor {
         event.preventDefault();
         event.stopPropagation();
         this.canvasDropArea.style.borderColor = 'var(--input-border)';
-        const files = event.dataTransfer?.files;
-        if (!files || files.length === 0)
-            return;
-        const imageFilesToLoad = Array.from(files);
-        if (imageFilesToLoad.length === 0) {
-            this.showStatus('No files dropped.', true);
-            return;
-        }
-        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-        imageFilesToLoad.sort((a, b) => collator.compare(a.name, b.name));
-
-        const wasImageListEmpty = this.loadedImages.length === 0;
-        const newEntries = await this._processAndAddFiles(imageFilesToLoad);
-        if (newEntries.length === 0) {
-            if (imageFilesToLoad.filter(f => f.type.startsWith('image/')).length > 0) {
-                this.showStatus("Failed to load any of the dropped images.", true);
-            }
-            return;
-        }
-        if (wasImageListEmpty) {
-            this.loadedImages = newEntries;
-            this.currentImageIndex = 0;
-            this.switchToImage(this.currentImageIndex);
-            if (newEntries.length === 1) {
-                this.showStatus(`Dropped image "${this.truncateFilename(newEntries[0].name)}" loaded.`, false);
-            }
-            else {
-                this.showStatus(`${newEntries.length} images dropped and loaded. Displaying first.`, false);
-            }
-        }
-        else {
-            this.saveCurrentState();
-            const firstNewImageOriginalIndex = this.loadedImages.length;
-            this.loadedImages.push(...newEntries);
-            this.currentImageIndex = firstNewImageOriginalIndex;
-            this.switchToImage(this.currentImageIndex);
-            if (newEntries.length === 1) {
-                this.showStatus(`Added and displaying dropped image "${this.truncateFilename(newEntries[0].name)}". Total: ${this.loadedImages.length}.`, false);
-            }
-            else {
-                this.showStatus(`Added ${newEntries.length} dropped images. Displaying "${this.truncateFilename(newEntries[0].name)}". Total: ${this.loadedImages.length}.`, false);
-            }
-        }
-        this.updateButtonStates();
-        // updateImageDropdown is called by switchToImage
+        const files = Array.from(event.dataTransfer?.files || []);
+        if (files.length) await this.importFiles(files);
     }
     async handleNativePaste(event) {
+        if (document.getElementById('pdfImportDialog').open) return;
         if (!event.clipboardData)
             return;
         if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
@@ -1676,6 +1588,7 @@ class ImageEditor {
             clearTimeout(this.statusTimeout);
         }
         this.statusBar.textContent = message;
+        this.statusBar.title = message;
         this.statusBar.className = 'status-bar';
         if (isError) {
             this.statusBar.classList.add('error');
@@ -1689,6 +1602,7 @@ class ImageEditor {
         if (duration > 0) {
             this.statusTimeout = window.setTimeout(() => {
                 this.statusBar.textContent = 'Ready';
+                this.statusBar.title = 'Ready';
                 this.statusBar.className = 'status-bar info';
             }, duration);
         }
